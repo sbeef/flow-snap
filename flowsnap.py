@@ -1,6 +1,8 @@
 import numpy as np
 import math, gdal
 
+VERBOSE = True
+
 # These functions are for caclulating the optimal location on a given flow accumulation (upstream area
 # raster) of a reported point with associated upstream area.
 
@@ -10,15 +12,17 @@ def get_min_entry(array):
     rows, columns = np.shape(array)
     return np.array([(minimum/columns), (minimum%columns)])
 
-def array_entry_to_location(entry, origin, res):
-    """gives the geographic location of an array entry.  Works in either row/column or x/y format.
+def array_entry_to_location(entry_x, entry_y, origin_x, origin_y, x_res, y_res):
+    """gives the geographic location of an array entry.
 
     Keyword Arguments:
     entry -- the aray entry
     origin -- the geographic location of the raster origin point
     res -- the size of the cell in geographic units of the raster
     """
-    return origin+(entry*res)
+    x = origin_x+(entry_x*x_res)+x_res/2.0
+    y = origin_y+(entry_y*y_res)+y_res/2.0
+    return np.array([x,y])
 
 def get_distance_grid(rows, columns, entry):
     """creates an array representing distance from a point in row/column format
@@ -32,7 +36,7 @@ def get_distance_grid(rows, columns, entry):
     return ((Y-entry[0])**2 + (X-entry[1])**2)**(0.5)
 
 def location_to_array_entry(location, origin, res):
-    """gives the entry in an array of a geographic location.  Works in either row/column or x/y format.
+    """gives the entry in an array of a geographic location.
 
     Keyword Arguments:
     location -- the geographic location to find array coordinates of
@@ -75,9 +79,12 @@ def get_rating_grid(sample, dweight, aweight, upstream_area, acc_array, geotrans
     origin = np.array([geotransform[3], geotransform[0]])
     rc_sample = np.array([sample[1], sample[0]])
     sample_location = location_to_array_entry(rc_sample, origin, resolution)
-    distance_grid = get_distance_grid(Ysize, Xsize, sample_location)
+    if VERBOSE:
+        print sample_location
+    #distance_grid = get_distance_grid(Ysize, Xsize, sample_location)
     area_grid = get_area_matrix(upstream_area, acc_array, geotransform)
-    rating_grid = (distance_grid*(1/dweight))+(area_grid*(1/aweight))
+    #rating_grid = (distance_grid*(1/dweight))+(area_grid*(1/aweight))
+    rating_grid = area_grid
     return rating_grid
 
 def reported_pt_to_raster_pt(sample, upstream_area, acc_array, dataset, dweight=1, aweight=1):
@@ -95,9 +102,13 @@ def reported_pt_to_raster_pt(sample, upstream_area, acc_array, dataset, dweight=
     gtf = dataset.GetGeoTransform()
     rg = get_rating_grid(sample, dweight, aweight, upstream_area, acc_array, gtf, dataset)
     best = get_min_entry(rg)
-    best_loc = array_entry_to_location(best, np.array([gtf[3], gtf[0]]), gtf[1])
+    best_loc = array_entry_to_location(best[1],best[0], gtf[0], gtf[3], gtf[1], gtf[5])
+    if VERBOSE:
+		print "\t origin is (%s, %s)" % (gtf[0], gtf[3])
+		print "\t x res is %s, y res i %s" % (gtf[1], gtf[5])
+		print "\t optimal location is %s, %s" % (best, best_loc)
     area = acc_array[best[0]][best[1]]
-    return (np.array([best_loc[1], best_loc[0]]), area)
+    return (best_loc, area)
     
 def snap_pt_and_info(sample, upstream_area, dataset, acc_array, dweight=1, aweight=1):
     """gets the best matching point (and assoicated area) on a raster for a reported point and
@@ -110,18 +121,21 @@ def snap_pt_and_info(sample, upstream_area, dataset, acc_array, dweight=1, aweig
     dweight -- the ammount to weight distance from point by (default 1)
     aweight -- the ammount to weight difference in area by (default 1)
     """
-    gtf = dataset.GeGeoTransform()
+    gtf = dataset.GetGeoTransform()
     snaped, area = reported_pt_to_raster_pt(sample, upstream_area, acc_array, dataset, dweight, aweight)
     origin = np.array([gtf[0], gtf[3]])
-    distance = numpy.linalg.norm(snaped-origin)
+    distance = np.linalg.norm(snaped-sample)
     snaped_area = area*(gtf[1]**2)
     size_dif = abs(upstream_area-snaped_area)
-    return {'reported_x' = sample[0],
-            'reported_y' = sample[1],
-            'reported_area' = upstream_area,
-            'snaped_x' = snaped[0],
-            'snaped_y' = snaped[1],
-            'snaped_area' = snaped_area,
-            'distance_offset' = distance,
-            'area_offset' = size_dif}
-            
+    return {'reported_x': sample[0],
+            'reported_y': sample[1],
+            'reported_area': upstream_area,
+            'snaped_x': snaped[0],
+            'snaped_y': snaped[1],
+            'snaped_area': snaped_area,
+            'distance_offset': distance,
+            'area_offset': size_dif}
+
+def get_field_names():
+    return ['Sample', 'reported_x', 'reported_y', 'reported_area','snaped_x',
+            'snaped_y', 'snaped_area', 'distance_offset', 'area_offset']
